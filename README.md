@@ -36,5 +36,3 @@ The key components of the model include:
 - **FRESH Model (`FRESHModel`):**  
   Combines the above components into one complete model.
 
-## Repository Structure
-
