@@ -37,5 +37,5 @@ The key components of the model include:
   Combines the above components into one complete model.
 
 - **Tools and Source Code References:**  
-sLORETA: Source localization for EEG signal analysis. Learn more at sLORETA.
-BBCI Toolbox: For real-time EEG processing and BCI applications. Available at BBCI Toolbox.
+  - sLORETA: Source localization for EEG signal analysis. Learn more at sLORETA.
+  - BBCI Toolbox: For real-time EEG processing and BCI applications. Available at BBCI Toolbox.
