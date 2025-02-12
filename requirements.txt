@@ -1,2 +1,5 @@
 torch>=1.7.0
 numpy>=1.19.0
+mne>=0.23.0
+scikit-learn>=0.24.0
+matplotlib>=3.3.0
