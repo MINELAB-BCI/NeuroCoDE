@@ -36,5 +36,7 @@ The key components of the model include:
 - **FRESH Model (`FRESHModel`):**  
   Combines the above components into one complete model.
 
-## Repository Structure
 
+## Tools and Source Code References
+- sLORETA: Source localization for EEG signal analysis. Learn more at [sLORETA](https://www.uzh.ch/keyinst/loreta).
+- BBCI Toolbox: For real-time EEG processing and BCI applications. Available at [BBCI Toolbox](https://github.com/bbci/bbci_public).
