@@ -1,11 +1,26 @@
+import os
+import numpy as np
+import mne
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Function
-import math
 
 ##############################################
-# Gradient Reversal Layer for Domain Adversarial Training
+# 1) Define channel order (25 channels → 5x5 grid)
+##############################################
+channel_order = [
+    "F1","F2","F3","F4","F5",
+    "F6","FC1","FC2","FC3","FC4",
+    "FC5","FC6","C1","C2","C3",
+    "C4","C5","C6","CP1","CP2",
+    "CP3","CP4","Fz","Cz","CPz"
+]
+
+##############################################
+# 2) Gradient Reversal Layer
 ##############################################
 class GradientReversalFunction(Function):
     @staticmethod
@@ -21,27 +36,23 @@ def grad_reverse(x, lambda_=1.0):
     return GradientReversalFunction.apply(x, lambda_)
 
 ##############################################
-# EEG Encoder with CNN, Spectral & Spatial Attention
+# 3) EEGEncoder (CNN + Attention)
 ##############################################
 class EEGEncoder(nn.Module):
     def __init__(self, embedding_dim=128):
-        """
-        EEG trial shape: (batch, 1, T, 5, 5)
-        where T is the time dimension and 5x5 is the spatial electrode grid.
-        """
         super(EEGEncoder, self).__init__()
-        # First conv layer: apply a kernel along the time dimension (e.g., kernel size 65) 
-        # with a spatial kernel of 1x1.
+        
+        # conv1: Temporal axis (kernel_size=(65,1,1)), stride=(10,1,1)
         self.conv1 = nn.Conv3d(
             in_channels=1, 
             out_channels=32, 
             kernel_size=(65, 1, 1), 
             stride=(10, 1, 1),
-            padding=(32, 0, 0)  # Padding to roughly preserve input dimensions
+            padding=(32, 0, 0)
         )
         self.elu = nn.ELU()
-        # Second conv layer: extract spatial information using a 5x5 kernel 
-        # while using a kernel size of 1 along the time dimension.
+        
+        # conv2: Spatial axis (kernel_size=(1,5,5))
         self.conv2 = nn.Conv3d(
             in_channels=32, 
             out_channels=64, 
@@ -50,10 +61,7 @@ class EEGEncoder(nn.Module):
             padding=(0, 2, 2)
         )
         
-        # --- Spectral Attention ---
-        # The output of conv2 has shape (batch, 64, T_out, 5, 5). 
-        # Assume T_out corresponds to frequency bands.
-        # We perform spatial averaging and then generate attention weights per frequency band.
+        # Spectral Attention
         self.spectral_fc = nn.Sequential(
             nn.Linear(64, 32),
             nn.ELU(),
@@ -61,8 +69,7 @@ class EEGEncoder(nn.Module):
             nn.Sigmoid()
         )
         
-        # --- Spatial Attention ---
-        # Average over the time dimension and use a 2D convolution to generate a spatial attention map (5x5).
+        # Spatial Attention
         self.spatial_conv = nn.Conv2d(
             in_channels=64, 
             out_channels=1, 
@@ -70,53 +77,42 @@ class EEGEncoder(nn.Module):
             padding=1
         )
         
-        # Final embedding: global average pooling followed by a fully-connected layer.
+        # Global pooling + FC for embedding
         self.embedding_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
         self.fc_embedding = nn.Linear(64, embedding_dim)
         
     def forward(self, x):
-        """
-        x: EEG trial, shape (batch, 1, T, 5, 5)
-        """
-        # CNN-based feature extraction
-        x = self.conv1(x)      # Shape: (batch, 32, T_out, 5, 5)
+        # x: (batch, 1, T, 5, 5)
+        x = self.conv1(x)  # (batch, 32, T', 5, 5)
         x = self.elu(x)
-        x = self.conv2(x)      # Shape: (batch, 64, T_out, 5, 5)
+        x = self.conv2(x)  # (batch, 64, T', 5, 5)
         x = self.elu(x)
-        
+
         batch_size, C, D, H, W = x.size()
         
-        # --- Spectral Attention ---
-        # Average over spatial dimensions -> (batch, 64, D)
-        spectral_feat = x.mean(dim=[3, 4])  # Shape: (batch, 64, D)
-        # Permute to get each frequency band as a 64-dimensional vector: (batch, D, 64)
-        spectral_feat = spectral_feat.permute(0, 2, 1)  # Shape: (batch, D, 64)
-        # Compute attention weights for each frequency band
-        attn_weights = self.spectral_fc(spectral_feat)  # Shape: (batch, D, 64)
-        # Apply the attention weights
+        # 1) Spectral Attention
+        spectral_feat = x.mean(dim=[3,4])  # (batch, 64, D)
+        spectral_feat = spectral_feat.permute(0, 2, 1)  # (batch, D, 64)
+        attn_weights = self.spectral_fc(spectral_feat)  # (batch, D, 64)
         spectral_feat = spectral_feat * attn_weights
-        # Permute back to (batch, 64, D)
-        spectral_feat = spectral_feat.permute(0, 2, 1)
-        # Broadcast the spectral attention weights along spatial dimensions
-        spectral_attn = spectral_feat.unsqueeze(-1).unsqueeze(-1)  # Shape: (batch, 64, D, 1, 1)
+        spectral_feat = spectral_feat.permute(0, 2, 1)  # (batch, 64, D)
+        spectral_attn = spectral_feat.unsqueeze(-1).unsqueeze(-1)  # (batch, 64, D, 1, 1)
         x = x * spectral_attn
         
-        # --- Spatial Attention ---
-        # Average over the time dimension (D) -> (batch, 64, H, W)
-        spatial_feat = x.mean(dim=2)
-        spatial_attn = self.spatial_conv(spatial_feat)  # Shape: (batch, 1, H, W)
+        # 2) Spatial Attention
+        spatial_feat = x.mean(dim=2)  # (batch, 64, 5, 5)
+        spatial_attn = self.spatial_conv(spatial_feat)  # (batch, 1, 5, 5)
         spatial_attn = torch.sigmoid(spatial_attn)
-        # Apply spatial attention by unsqueezing the time dimension: (batch, 1, 1, H, W)
-        x = x * spatial_attn.unsqueeze(2)
+        x = x * spatial_attn.unsqueeze(2)  # (batch, 64, D, 5, 5)
         
-        # Final embedding extraction: global average pooling followed by a fully-connected layer.
-        x_pool = self.embedding_pool(x)  # Shape: (batch, 64, 1, 1, 1)
-        x_pool = x_pool.view(batch_size, -1)  # Shape: (batch, 64)
-        embedding = self.fc_embedding(x_pool)   # Shape: (batch, embedding_dim)
+        # 3) Embedding
+        x_pool = self.embedding_pool(x)  # (batch, 64, 1, 1, 1)
+        x_pool = x_pool.view(batch_size, -1)  # (batch, 64)
+        embedding = self.fc_embedding(x_pool) # (batch, embedding_dim)
         return embedding
 
 ##############################################
-# Domain Classifier for Domain Adversarial Training
+# 4) Domain Classifier
 ##############################################
 class DomainClassifier(nn.Module):
     def __init__(self, embedding_dim, num_domains):
@@ -131,47 +127,38 @@ class DomainClassifier(nn.Module):
         return self.fc(x)
 
 ##############################################
-# Relation Network for Few-Shot Metric Learning
+# 5) Relation Network
 ##############################################
 class RelationNetwork(nn.Module):
     def __init__(self, embed_dim):
         super(RelationNetwork, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(embed_dim * 2, 64),
+            nn.Linear(embed_dim*2, 64),
             nn.ELU(),
             nn.Linear(64, 1)
         )
         
     def forward(self, x1, x2):
-        # x1 and x2: shape (batch, embed_dim) or (embed_dim,) for a single sample
         if x1.dim() == 1:
             x1 = x1.unsqueeze(0)
         if x2.dim() == 1:
             x2 = x2.unsqueeze(0)
         combined = torch.cat([x1, x2], dim=-1)
         score = self.fc(combined)
-        return score.squeeze(-1)  # Returns (batch,) or a scalar
+        return score.squeeze(-1)
 
 ##############################################
-# Message Passing Module for Prototype Refinement
+# 6) Message Passing (Prototype Refinement)
 ##############################################
 class MessagePassing(nn.Module):
     def __init__(self, embed_dim):
         super(MessagePassing, self).__init__()
-        # Learnable transformation H(·)
         self.H = nn.Linear(embed_dim, embed_dim)
         
     def forward(self, prototypes, query, num_iterations=1):
-        """
-        prototypes: tensor of shape (K, embed_dim)
-        query: tensor of shape (embed_dim,)
-        num_iterations: number of message passing iterations L
-        """
-        refined = prototypes  # Shape: (K, embed_dim)
-        # The query node is used for message passing but is not updated.
+        refined = prototypes
         for _ in range(num_iterations):
-            # Concatenate prototypes and the query node: shape (K+1, embed_dim)
-            V = torch.cat([refined, query.unsqueeze(0)], dim=0)
+            V = torch.cat([refined, query.unsqueeze(0)], dim=0)  # (K+1, embed_dim)
             new_prototypes = []
             for k in range(refined.size(0)):
                 c_k = refined[k]
@@ -179,23 +166,17 @@ class MessagePassing(nn.Module):
                 for m in range(V.size(0)):
                     if m == k:
                         continue
-                    # Compute weight: w_{km} = exp(-||c_k - V[m]||^2)
                     weight = torch.exp(-torch.norm(c_k - V[m])**2)
-                    message = message + weight * self.H(V[m])
-                new_c_k = c_k + message
-                new_prototypes.append(new_c_k)
+                    message += weight * self.H(V[m])
+                new_prototypes.append(c_k + message)
             refined = torch.stack(new_prototypes, dim=0)
         return refined
 
 ##############################################
-# Complete Few-Shot Model (FRESH)
+# 7) FRESH Model (Encoder + DomainCls + RN + MP)
 ##############################################
 class FRESHModel(nn.Module):
     def __init__(self, embedding_dim=128, num_domains=2):
-        """
-        embedding_dim: Dimension of the encoder output embedding.
-        num_domains: Number of domain classes (e.g., sessions or subjects)
-        """
         super(FRESHModel, self).__init__()
         self.encoder = EEGEncoder(embedding_dim=embedding_dim)
         self.domain_classifier = DomainClassifier(embedding_dim, num_domains)
@@ -203,164 +184,243 @@ class FRESHModel(nn.Module):
         self.message_passing = MessagePassing(embedding_dim)
         
     def forward(self, x, lambda_grl=1.0):
-        """
-        x: EEG trial (batch, 1, T, 5, 5)
-        lambda_grl: Scaling parameter for the Gradient Reversal Layer
-        """
-        embedding = self.encoder(x)  # f_θ(x)
-        # Apply gradient reversal before passing the embedding to the domain classifier
+        embedding = self.encoder(x)
         domain_logits = self.domain_classifier(grad_reverse(embedding, lambda_grl))
         return embedding, domain_logits
 
 ##############################################
-# Few-Shot Inference and Loss Calculation Functions
+# 8) Few-Shot Utility Functions
 ##############################################
 def compute_prototypes(embeddings, labels, num_classes):
-    """
-    Compute each class prototype c_k from the support set embeddings and labels.
-    embeddings: Tensor of shape (N, embed_dim)
-    labels: Tensor of shape (N,) with values in 0...num_classes-1
-    """
     prototypes = []
     for k in range(num_classes):
-        class_mask = (labels == k)
-        if class_mask.sum() > 0:
-            proto = embeddings[class_mask].mean(dim=0)
+        mask = (labels == k)
+        if mask.sum() > 0:
+            proto = embeddings[mask].mean(dim=0)
         else:
             proto = torch.zeros(embeddings.size(1), device=embeddings.device)
         prototypes.append(proto)
-    prototypes = torch.stack(prototypes, dim=0)
-    return prototypes
+    return torch.stack(prototypes, dim=0)
 
 def predict(query, prototypes, relation_network):
-    """
-    Predict the label for a query sample using its relation scores to the prototypes.
-    query: Embedding of the query sample, shape (embed_dim,)
-    prototypes: Tensor of shape (K, embed_dim)
-    relation_network: Module to compute the relation score between two embeddings, g_θ
-    """
     scores = []
     for proto in prototypes:
         r = relation_network(query, proto)
         scores.append(r)
-    scores = torch.stack(scores)  # Shape: (K,)
+    scores = torch.stack(scores)
     probs = F.softmax(scores, dim=0)
     pred = torch.argmax(probs).item()
     return pred, probs
 
 def metric_loss(embeddings, labels, relation_network):
-    """
-    Compute the few-shot metric loss (MSE) over all pairs in the support set.
-    For each pair, r_{i,j} = g_θ(f_θ(x_i), f_θ(x_j)) and target t_{i,j} is 1 if they belong 
-    to the same class, and 0 otherwise.
-    embeddings: Tensor of shape (N, embed_dim)
-    labels: Tensor of shape (N,)
-    """
     N = embeddings.size(0)
     loss = 0.0
-    count = 0
     for i in range(N):
         for j in range(N):
             r_ij = relation_network(embeddings[i], embeddings[j])
             t_ij = 1.0 if labels[i] == labels[j] else 0.0
-            loss = loss + (r_ij - t_ij) ** 2
-            count += 1
-    return loss / count
+            loss += (r_ij - t_ij)**2
+    return loss / (N*N)
 
 def sparsity_loss(embeddings, lambda_s):
-    """
-    Compute the sparsity loss: L_sparse = lambda_s * sum(|z_m|).
-    embeddings: Tensor of shape (batch, embed_dim)
-    """
     return lambda_s * torch.sum(torch.abs(embeddings))
 
 def regularization_loss(encoder, relation_network, x, x_perturbed):
-    """
-    Compute the regularization loss: L_reg = || r_{i,j}(tilde{x}_i, tilde{x}_j) - r_{i,j}(x_i, x_j) ||^2.
-    x, x_perturbed: EEG trials of shape (batch, 1, T, 5, 5)
-    """
-    emb_orig = encoder(x)           # Shape: (batch, embed_dim)
-    emb_pert = encoder(x_perturbed)  # Shape: (batch, embed_dim)
+    emb_orig = encoder(x)
+    emb_pert = encoder(x_perturbed)
     N = emb_orig.size(0)
     loss = 0.0
-    count = 0
     for i in range(N):
         for j in range(N):
             r_orig = relation_network(emb_orig[i], emb_orig[j])
             r_pert = relation_network(emb_pert[i], emb_pert[j])
-            loss = loss + (r_orig - r_pert) ** 2
-            count += 1
-    return loss / count
+            loss += (r_orig - r_pert)**2
+    return loss / (N*N)
 
 ##############################################
-# Example: One Training Step using the FRESH Model
+# Additional) Accuracy Evaluation Function
+##############################################
+from torch.utils.data import DataLoader
+
+def evaluate_accuracy(model, dataset, num_classes=3, batch_size=8):
+    """
+    Compute embeddings for the entire dataset → calculate class prototypes → predict each sample → accuracy (%)
+    """
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    
+    all_embeddings = []
+    all_labels = []
+    
+    model.eval()
+    with torch.no_grad():
+        for x, y in loader:
+            emb, _ = model(x, lambda_grl=0.0)  # Domain classifier is not used
+            all_embeddings.append(emb)
+            all_labels.append(y)
+    
+    all_embeddings = torch.cat(all_embeddings, dim=0)  # (N, embed_dim)
+    all_labels = torch.cat(all_labels, dim=0)          # (N,)
+    
+    # Compute prototypes
+    prototypes = compute_prototypes(all_embeddings, all_labels, num_classes)
+    
+    correct = 0
+    total = all_embeddings.size(0)
+    for i in range(total):
+        q_emb = all_embeddings[i]
+        pred_label, _ = predict(q_emb, prototypes, model.relation_network)
+        if pred_label == all_labels[i].item():
+            correct += 1
+    acc = 100.0 * correct / total
+    return acc
+
+##############################################
+# 9) Dataset (Determine class from file name, divide into chunks)
+##############################################
+class ThreeClassChunkDataset(Dataset):
+    """
+    - Multiple BrainVision (.vhdr) files.
+    - If the file name contains 'reaching', 'multigrasp', or 'twist', assign corresponding class (0/1/2).
+    - Cut the raw data into chunks of chunk_size (in seconds) to form (25, chunk_samples) → (1, chunk_samples, 5,5)
+    - Use only the 25 channels (channel_order)
+    """
+    def __init__(
+        self,
+        fnames,
+        chunk_size=2.0,
+        step_size=2.0,
+        sfreq_cut=None,
+        preload=True
+    ):
+        super().__init__()
+        
+        self.data_list = []
+        self.label_list = []
+        
+        for fname in fnames:
+            raw = mne.io.read_raw_brainvision(fname, preload=preload)
+            
+            # Determine label from file name
+            f_lower = os.path.basename(fname).lower()
+            if 'reaching' in f_lower:
+                label = 0
+            elif 'multigrasp' in f_lower:
+                label = 1
+            elif 'twist' in f_lower:
+                label = 2
+            else:
+                print(f"[WARNING] Skipping {fname} as reaching/multigrasp/twist could not be recognized.")
+                continue
+            
+            if sfreq_cut is not None:
+                raw.resample(sfreq_cut)
+            
+            raw.pick_channels(channel_order)
+            sfreq = raw.info['sfreq']
+            
+            chunk_samples = int(chunk_size * sfreq)
+            step_samples = int(step_size * sfreq)
+            
+            data_all = raw.get_data()  # (25, n_times)
+            n_times_total = data_all.shape[1]
+            
+            start = 0
+            while start + chunk_samples <= n_times_total:
+                segment = data_all[:, start:start+chunk_samples]  # (25, chunk_samples)
+                
+                # (25, chunk_samples) -> (5,5,chunk_samples) -> (chunk_samples,5,5) -> (1, chunk_samples,5,5)
+                seg_reshaped = segment.reshape(5, 5, chunk_samples)
+                seg_reshaped = np.transpose(seg_reshaped, (2, 0, 1))
+                seg_reshaped = np.expand_dims(seg_reshaped, axis=0)
+                
+                self.data_list.append(seg_reshaped)
+                self.label_list.append(label)
+                
+                start += step_samples
+        
+        self.data_list = np.array(self.data_list, dtype=np.float32)
+        self.label_list = np.array(self.label_list, dtype=np.int64)
+        
+        print(f"[INFO] Loaded total {len(self.data_list)} segments.")
+    
+    def __len__(self):
+        return len(self.data_list)
+    
+    def __getitem__(self, idx):
+        x = self.data_list[idx]  # (1, chunk_samples, 5,5)
+        y = self.label_list[idx]
+        return torch.from_numpy(x), torch.tensor(y, dtype=torch.long)
+
+##############################################
+# 10) Main Execution Example
 ##############################################
 if __name__ == '__main__':
-    # Hyperparameters
-    embedding_dim = 128
-    num_domains = 2          # For example, two sessions or subjects
-    num_classes = 5          # K-way classification (example)
-    n_shot = 5               # Number of samples per class
-    lambda_grl = 1.0         # Scaling parameter for GRL
-    lambda_sparsity = 1e-4   # Weight for the sparsity loss
-    num_msg_iterations = 2   # Number of message passing iterations
+    # (1) List of BrainVision data files (.vhdr)
+    fnames = [
+        "/path/to/my_reaching_file.vhdr",
+        "/path/to/my_multigrasp_file.vhdr",
+        "/path/to/my_twist_file.vhdr",
+    ]
     
-    # Create model and optimizer
-    model = FRESHModel(embedding_dim=embedding_dim, num_domains=num_domains)
+    if len(fnames) == 0:
+        print("[ERROR] fnames is empty. Please provide actual paths to .vhdr files.")
+        import sys
+        sys.exit(0)
+    
+    # (2) Create Dataset & DataLoader
+    dataset = ThreeClassChunkDataset(
+        fnames=fnames,
+        chunk_size=2.0,
+        step_size=2.0,
+        sfreq_cut=None,  # If needed, e.g.: sfreq_cut=256
+        preload=True
+    )
+    loader = DataLoader(dataset, batch_size=8, shuffle=True)
+    
+    # (3) Create model
+    num_classes = 3
+    num_domains = 2  # Assume 2 domains (dummy)
+    model = FRESHModel(embedding_dim=128, num_domains=num_domains)
+    
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
+    n_epochs = 2
     
-    # Create dummy data
-    # EEG trial shape: (batch, 1, T, 5, 5); here T=100 (sufficient to accommodate conv1 kernel size 65)
-    batch_size = 32
-    T = 100
-    dummy_eeg = torch.randn(batch_size, 1, T, 5, 5)
-    # Domain labels (e.g., 0 or 1)
-    dummy_domain = torch.randint(0, num_domains, (batch_size,))
+    # (4) Training Loop
+    for epoch in range(n_epochs):
+        model.train()
+        for batch_idx, (x, y) in enumerate(loader):
+            # Dummy domain labels
+            domain_labels = torch.randint(0, num_domains, (x.size(0),))
+            
+            # Forward
+            embeddings, domain_logits = model(x, lambda_grl=1.0)
+            
+            # Domain classification loss
+            domain_loss = F.cross_entropy(domain_logits, domain_labels)
+            
+            # Relation Network MSE (same=1, different=0)
+            N = embeddings.size(0)
+            few_shot_loss = 0.0
+            count = 0
+            for i in range(N):
+                for j in range(N):
+                    r_ij = model.relation_network(embeddings[i], embeddings[j])
+                    t_ij = 1.0 if y[i] == y[j] else 0.0
+                    few_shot_loss += (r_ij - t_ij)**2
+                    count += 1
+            few_shot_loss /= count
+            
+            total_loss = domain_loss + few_shot_loss
+            
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
+            
+            if (batch_idx+1) % 5 == 0:
+                print(f"[Epoch {epoch+1}] Batch {batch_idx+1} / Loss={total_loss.item():.4f}")
     
-    # Forward pass: get embeddings and domain predictions
-    embeddings, domain_logits = model(dummy_eeg, lambda_grl=lambda_grl)
+    print("Training complete!")
     
-    # Domain classification loss (using CrossEntropy)
-    domain_loss = F.cross_entropy(domain_logits, dummy_domain)
-    
-    # Create a support set for few-shot learning: n_shot * num_classes samples
-    support_size = n_shot * num_classes
-    support_eeg = torch.randn(support_size, 1, T, 5, 5)
-    # Support set labels: n_shot samples for each class
-    support_labels = torch.tensor([i for i in range(num_classes) for _ in range(n_shot)])
-    support_embeddings = model.encoder(support_eeg)  # f_θ(x)
-    
-    # Compute prototypes from the support set embeddings
-    prototypes = compute_prototypes(support_embeddings, support_labels, num_classes)
-    
-    # Optionally, refine prototypes using message passing (hierarchical refinement)
-    # Here we use the first support sample's embedding as the query (for demonstration)
-    query_embedding = support_embeddings[0]
-    refined_prototypes = model.message_passing(prototypes, query_embedding, num_iterations=num_msg_iterations)
-    
-    # Classification prediction for the query sample using the Relation Network
-    pred_label, relation_probs = predict(query_embedding, refined_prototypes, model.relation_network)
-    print(f"Predicted label: {pred_label}")
-    print(f"Relation probabilities: {relation_probs.detach().cpu().numpy()}")
-    
-    # Compute the metric loss over pairs in the support set (MSE loss)
-    met_loss = metric_loss(support_embeddings, support_labels, model.relation_network)
-    
-    # Compute the sparsity loss on the embeddings
-    sp_loss = sparsity_loss(embeddings, lambda_sparsity)
-    
-    # If perturbed samples are available, compute the regularization loss L_reg
-    noise = 0.01 * torch.randn_like(dummy_eeg)
-    dummy_eeg_pert = dummy_eeg + noise
-    reg_loss = regularization_loss(model.encoder, model.relation_network, dummy_eeg, dummy_eeg_pert)
-    
-    # Combine all losses (weights for each loss term can be tuned as needed)
-    total_loss = domain_loss + met_loss + sp_loss + reg_loss
-    print(f"Total Loss: {total_loss.item():.4f}")
-    
-    # Backpropagation and optimizer step
-    optimizer.zero_grad()
-    total_loss.backward()
-    optimizer.step()
-    
-    print("One training step complete.")
+    # (5) Evaluate Accuracy
+    accuracy = evaluate_accuracy(model, dataset, num_classes=num_classes, batch_size=8)
+    print(f"Final Accuracy (on entire dataset) = {accuracy:.2f}%")
