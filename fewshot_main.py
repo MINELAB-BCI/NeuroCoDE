@@ -13,8 +13,8 @@ worker_init = global_config.worker_init
 global_generator = global_config._global_generator
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-subject = "session1_sub2"  # Set subject file name for EEG loading.
-subject_dir = "models/sub2"  # Directory for pretrained model.
+subject = "eegfile_name"  # Set subject file name for EEG loading.
+subject_dir = "models/eegfile_name"  # Directory for pretrained model.
 n_shot = 25
 directory_path = f"numpy_save/{subject_dir}/{n_shot}_shot"
 if not os.path.exists(directory_path):
