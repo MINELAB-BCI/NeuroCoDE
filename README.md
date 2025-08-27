@@ -1,5 +1,5 @@
-# FRESH-BCI
-Few-Shot Relational Inference Enables Minimal-Calibration EEG-to-Robot Control
+# HYNAL-SAS
+Hyper Neuro-adaptive Learning Enables A Fully EEG-guided Shared Autonomy System
 
 This repository implements the FRESH model for EEG signal analysis with domain adversarial training, few-shot metric learning, and prototype refinement via message passing. The model integrates an EEG encoder with spectral and spatial attention, a domain classifier (using a gradient reversal layer), a relation network for computing pairwise similarity, and a message passing module to refine class prototypes.
 
