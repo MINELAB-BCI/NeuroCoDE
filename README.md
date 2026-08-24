@@ -89,8 +89,8 @@ The required supervised pretraining data depend on the selected condition:
 
 | condition | required supervised pretraining data | fine-tuning + test data |
 |---|---|---|
-| `with_robotic_arm` | `<DATA_ROOT>/w_pretrained_data` | w/ robotic arm MI data |
-| `without_robotic_arm` | `<DATA_ROOT>/wo_pretrained_data` | w/o robotic arm MI data |
+| `with_robotic_arm` | `<DATA_ROOT>/w_pretrained_data` | w_roboticarm_data |
+| `without_robotic_arm` | `<DATA_ROOT>/wo_pretrained_data` | wo_roboticarm_data |
 
 Set the data root and run training from the repository root:
 
