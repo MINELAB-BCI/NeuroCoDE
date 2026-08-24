@@ -9,12 +9,12 @@ Few-shot 3-class motor imagery classification (reaching / multigrasp / twist) wi
 - cue-locked window **0–4 s**
 - random seed **42**
 
-Released checkpoints were fine-tuned and tested separately on **w/ robotic arm MI data** and **w/o robotic arm MI data**. Both conditions use the same training and evaluation pipeline but different supervised pretraining data.
+Released checkpoints were fine-tuned and tested separately on **w_roboticarm_data** and **wo_roboticarm_data**. Both conditions use the same training and evaluation pipeline but different supervised pretraining data.
 
 | condition | supervised pretraining | fine-tuning + test |
 |---|---|---|
-| `with_robotic_arm` | `w_pretrained_data` | w/ robotic arm MI data |
-| `without_robotic_arm` | `wo_pretrained_data` | w/o robotic arm MI data |
+| `with_robotic_arm` | `w_pretrained_data` | w_roboticarm_data |
+| `without_robotic_arm` | `wo_pretrained_data` | wo_roboticarm_data |
 
 For each subject, the fine-tuning and held-out query trials are class-balanced and **disjoint**:
 
