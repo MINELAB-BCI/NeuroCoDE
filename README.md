@@ -6,8 +6,6 @@ Few-shot 3-class motor imagery classification (reaching / multigrasp / twist) wi
 - mu (8–13 Hz) and high-gamma (50–70 Hz) band embeddings
 - **learnable band weights** fused **before** prototype construction (early fusion)
 - cosine similarity to class prototypes
-- cue-locked window **0–4 s**
-- random seed **42**
 
 Released checkpoints were fine-tuned and tested separately on **w_roboticarm_data** and **wo_roboticarm_data**. Both conditions use the same training and evaluation pipeline but different supervised pretraining data.
 
