@@ -81,6 +81,12 @@ def main():
         model_path = os.path.join(weight_dir, "band_prototype_model.pth")
         expected_path = os.path.join(weight_dir, "sweep_result.json")
         vhdr = os.path.join(data_root, f"session1_{sub}_reaching_MI.vhdr")
+        subject_name = f"session1_{sub}"
+        if not os.path.exists(vhdr):
+            alt = os.path.join(data_root, f"{sub}_reaching_MI.vhdr")
+            if os.path.exists(alt):
+                vhdr = alt
+                subject_name = sub
         if not os.path.exists(model_path):
             print(f"[SKIP] {sub}: missing {model_path}")
             n_skip += 1
@@ -90,7 +96,7 @@ def main():
             n_skip += 1
             continue
 
-        dataset = BandEEGDataset(subject_name=f"session1_{sub}", tmin=args.tmin, tmax=args.tmax)
+        dataset = BandEEGDataset(subject_name=subject_name, tmin=args.tmin, tmax=args.tmax)
         labels = np.asarray(dataset.label_list)
         train_indices, _, _, query_indices, _, _ = make_balanced_split(
             labels, seed=SEED, test_ratio=0.2, n_shot=25)
