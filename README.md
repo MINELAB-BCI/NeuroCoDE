@@ -1,4 +1,4 @@
-# Band-prototype EEG (early fusion)
+# NeuroCoDE
 
 Few-shot 3-class motor imagery classification (reaching / multigrasp / twist) with:
 
