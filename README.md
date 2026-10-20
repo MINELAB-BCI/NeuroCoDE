@@ -7,12 +7,12 @@ Few-shot 3-class motor imagery classification (reaching / multigrasp / twist) wi
 - **learnable band weights** fused **before** prototype construction (early fusion)
 - cosine similarity to class prototypes
 
-Released checkpoints were fine-tuned and tested separately on **w_roboticarm_data** and **wo_roboticarm_data**. Both conditions use the same training and evaluation pipeline but different supervised pretraining data.
+Each participant was recorded in three sessions. Released checkpoints are provided for two conditions that differ **only in the prior sessions used for supervised pretraining**. Both conditions are fine-tuned and evaluated on the same target session (session 1), with identical query trials.
 
-| condition | supervised pretraining | fine-tuning + test |
-|---|---|---|
-| `with_robotic_arm` | `w_pretrained_data` | w_roboticarm_data |
-| `without_robotic_arm` | `wo_pretrained_data` | wo_roboticarm_data |
+| condition | model in the paper | supervised pretraining (prior sessions) | fine-tuning + test (target session) |
+|---|---|---|---|
+| `two_prior_sessions` | B2 | session 2 + session 3 | session 1 |
+| `one_prior_session` | A1 | session 2 | session 1 |
 
 For each subject, the fine-tuning and held-out query trials are class-balanced and **disjoint**:
 
@@ -25,21 +25,23 @@ Reported numbers are the mean ± standard deviation over **100** random support 
 
 MI EEG files are **not included in this repository**. Please contact the authors to request access to the data.
 
-After obtaining the data, set `DATA_ROOT` to the root directory containing the downloaded MI EEG data:
+After obtaining the data, set `DATA_ROOT` to the folder containing the BrainVision files of all sessions:
 
 ```bash
 export DATA_ROOT=/path/to/MI_EEG_data
 ```
 
-For training from scratch, the data root must contain the corresponding supervised pretraining folders:
-
 ```text
 <DATA_ROOT>/
-├── w_pretrained_data/
-└── wo_pretrained_data/
+├── session1_sub1_reaching_MI.vhdr / .vmrk / .eeg
+├── session1_sub1_multigrasp_MI.vhdr / .vmrk / .eeg
+├── session1_sub1_twist_MI.vhdr / .vmrk / .eeg
+├── session2_sub1_...
+├── session3_sub1_...
+└── ...
 ```
 
-The remaining condition-specific MI data should also be placed under `<DATA_ROOT>` according to the structure provided with the dataset.
+Inference needs only the session-1 (target) files. Training from scratch also needs the prior sessions (session 2, and session 3 for `two_prior_sessions`).
 
 ## Setup
 
@@ -51,7 +53,7 @@ pip install -r requirements.txt
 
 ## Reproduce released numbers (inference only)
 
-Only the condition-specific fine-tuning and held-out evaluation data are required for inference. The supervised pretraining data are not loaded.
+Only the target-session files are required for inference. The prior sessions are not loaded.
 
 Set the data root and run inference from the repository root:
 
@@ -59,8 +61,8 @@ Set the data root and run inference from the repository root:
 export DATA_ROOT=/path/to/MI_EEG_data
 
 cd code
-python run_infer.py --condition without_robotic_arm --data_root "$DATA_ROOT"
-python run_infer.py --condition with_robotic_arm --data_root "$DATA_ROOT"
+python run_infer.py --condition one_prior_session --data_root "$DATA_ROOT"
+python run_infer.py --condition two_prior_sessions --data_root "$DATA_ROOT"
 ```
 
 Optional: evaluate only selected subjects using `--subjects`.
@@ -70,7 +72,7 @@ export DATA_ROOT=/path/to/MI_EEG_data
 
 cd code
 python run_infer.py \
-  --condition without_robotic_arm \
+  --condition one_prior_session \
   --data_root "$DATA_ROOT" \
   --subjects sub1,sub2
 ```
@@ -85,12 +87,10 @@ A `[MATCH]` line means that the reproduced 1-, 5-, and 25-shot mean accuracies a
 
 ## Train from scratch
 
-The required supervised pretraining data depend on the selected condition:
-
-| condition | required supervised pretraining data | fine-tuning + test data |
+| condition | prior sessions loaded for supervised pretraining | fine-tuning + test |
 |---|---|---|
-| `with_robotic_arm` | `<DATA_ROOT>/w_pretrained_data` | w_roboticarm_data |
-| `without_robotic_arm` | `<DATA_ROOT>/wo_pretrained_data` | wo_roboticarm_data |
+| `two_prior_sessions` | `session2_subX_*`, `session3_subX_*` | `session1_subX_*` |
+| `one_prior_session` | `session2_subX_*` | `session1_subX_*` |
 
 Set the data root and run training from the repository root:
 
@@ -98,8 +98,8 @@ Set the data root and run training from the repository root:
 export DATA_ROOT=/path/to/MI_EEG_data
 
 cd code
-python run_train.py --condition without_robotic_arm --data_root "$DATA_ROOT" --retrain
-python run_train.py --condition with_robotic_arm --data_root "$DATA_ROOT" --retrain
+python run_train.py --condition one_prior_session --data_root "$DATA_ROOT" --retrain
+python run_train.py --condition two_prior_sessions --data_root "$DATA_ROOT" --retrain
 ```
 
 Checkpoints are written to:
@@ -111,8 +111,8 @@ weights/<condition>/subX/band_prototype_model.pth
 Excel summaries are written to:
 
 ```text
-results/with_robotic_arm.xlsx
-results/without_robotic_arm.xlsx
+results/two_prior_sessions.xlsx
+results/one_prior_session.xlsx
 ```
 
 ## Repository layout
@@ -128,21 +128,21 @@ band-prototype-eeg/
 │   ├── run_train.py
 │   └── run_infer.py
 ├── weights/
-│   ├── with_robotic_arm/
+│   ├── two_prior_sessions/
 │   │   ├── sub1/
 │   │   │   ├── band_prototype_model.pth
 │   │   │   └── sweep_result.json
 │   │   ├── sub2/
 │   │   └── ...
-│   └── without_robotic_arm/
+│   └── one_prior_session/
 │       ├── sub1/
 │       │   ├── band_prototype_model.pth
 │       │   └── sweep_result.json
 │       ├── sub2/
 │       └── ...
 └── results/
-    ├── with_robotic_arm.xlsx
-    └── without_robotic_arm.xlsx
+    ├── two_prior_sessions.xlsx
+    └── one_prior_session.xlsx
 ```
 
 ### Source files

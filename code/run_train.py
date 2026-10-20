@@ -1,12 +1,15 @@
 """Train the early-fusion band-prototype model for one released condition.
 
-with_robotic_arm     : pretrain session2+session3, finetune+test session1
-without_robotic_arm  : pretrain session2,           finetune+test session1
+The two conditions differ only in the prior sessions used for supervised pretraining;
+both are fine-tuned and evaluated on the same target session (session1).
 
-Epoch window is 0-4 s. Seed is 42 (global_config).
+two_prior_sessions  (model B2): pretrain session2+session3, finetune+test session1
+one_prior_session   (model A1): pretrain session2,           finetune+test session1
+
+Epoch window is 0-4 s after motor-imagery onset. Seed is 42 (global_config).
 
 Example:
-  python run_train.py --condition without_robotic_arm --data_root /path/to/GIGA/RawData --subjects sub1
+  python run_train.py --condition one_prior_session --data_root /path/to/MI_EEG_data --subjects sub1
 """
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ SHOTS = [1, 5, 25]
 def parse_args():
     p = argparse.ArgumentParser(description="Train early-fusion band-prototype models")
     p.add_argument("--condition", required=True,
-                   choices=["with_robotic_arm", "without_robotic_arm"])
+                   choices=["two_prior_sessions", "one_prior_session"])
     p.add_argument("--data_root", required=True)
     p.add_argument("--subjects", default="",
                    help="Comma-separated list. Default: sub1..sub25")
@@ -49,7 +52,7 @@ def list_subjects(override):
 
 
 def pretrain_sessions(condition, sub):
-    if condition == "with_robotic_arm":
+    if condition == "two_prior_sessions":
         return f"session2_{sub},session3_{sub}"
     return f"session2_{sub}"
 

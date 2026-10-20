@@ -1,10 +1,12 @@
 """Load released weights and reproduce the 100-repeat few-shot evaluation.
 
-Requires GIGA session1 files only (finetune/test session).
-Pretraining sessions are not needed because the encoder is already in the .pth.
+Requires the target-session (session1) files only.
+Prior sessions are not needed because the pretrained encoder is already in the .pth.
+
+Conditions: two_prior_sessions (model B2), one_prior_session (model A1).
 
 Example:
-  python run_infer.py --condition without_robotic_arm --data_root /path/to/GIGA/RawData
+  python run_infer.py --condition one_prior_session --data_root /path/to/MI_EEG_data
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ REPO = os.path.dirname(HERE)
 def parse_args():
     p = argparse.ArgumentParser(description="Reproduce few-shot results from released weights")
     p.add_argument("--condition", required=True,
-                   choices=["with_robotic_arm", "without_robotic_arm"])
+                   choices=["two_prior_sessions", "one_prior_session"])
     p.add_argument("--data_root", required=True,
                    help="Folder that contains session1_subX_reaching_MI.vhdr etc.")
     p.add_argument("--subjects", default="",

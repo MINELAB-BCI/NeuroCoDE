@@ -506,7 +506,7 @@ def build_pretrain_dataset(session_names, tmin=0.0, tmax=1.0):
 if __name__ == "__main__":
     os.makedirs(directory_path, exist_ok=True)
     if not DATA_ROOT:
-        raise SystemExit("Set DATA_ROOT to the GIGA folder that contains session*_sub*_*.vhdr")
+        raise SystemExit("Set DATA_ROOT to the folder that contains session*_sub*_*.vhdr")
     if device.type == "cuda":
         print(f"[INFO] Using GPU: {torch.cuda.get_device_name(0)}")
     else:
